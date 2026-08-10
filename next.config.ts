@@ -28,7 +28,7 @@ const nextConfig: NextConfig = {
   ...(process.env.NODE_ENV === 'production' ? { output: 'export' as const } : {}),
   allowedDevOrigins: getLocalIPs(),
   env: {
-    NEXT_PUBLIC_IS_DEPLOYED: isGithubActions ? 'true' : 'false',
+    NEXT_PUBLIC_IS_DEPLOYED: process.env.NEXT_PUBLIC_IS_DEPLOYED || 'true',
     NEXT_PUBLIC_BASE_PATH: basePath,
     NEXT_PUBLIC_BUILD_TIME: Date.now().toString(),
     NEXT_PUBLIC_GAS_URL: process.env.NEXT_PUBLIC_GAS_URL,
