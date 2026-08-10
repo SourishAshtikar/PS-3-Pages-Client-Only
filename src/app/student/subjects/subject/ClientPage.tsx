@@ -8,6 +8,7 @@ import { fetchGAS } from "@/lib/apiClient";
 import { decryptObject } from "@/lib/crypto";
 import { Button } from "@/components/ui/button";
 import { GoogleLogin } from "@react-oauth/google";
+import { useSession } from "@/components/AuthProvider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SubjectResourceCard } from "@/components/cards/SubjectResourceCard";
 import FloatingBackground from "@/components/ui/FloatingBackground";
@@ -771,6 +772,7 @@ function ResourceRowItem({ icon: Icon, title, description, count, countLabel, hr
 export default function StudentDashboard() {
   const searchParams = useSearchParams();
   const subjectId = searchParams.get('subjectId');
+  const { isAuthenticated, status: authStatus } = useSession();
 
   const [data, setData] = useState<any>(null);
   const [selectedCaseStudy, setSelectedCaseStudy] = useState<any | null>(null);
@@ -862,6 +864,8 @@ export default function StudentDashboard() {
   };
 
   useEffect(() => {
+    if (authStatus === "loading") return;
+
     if (subjectId) {
       // Stale-While-Revalidate: Load from local cache immediately if available
       const cachedDashboard = localStorage.getItem(`cached_dashboard_${subjectId}`);
@@ -869,6 +873,7 @@ export default function StudentDashboard() {
       if (cachedDashboard) {
         try {
           let parsed = JSON.parse(cachedDashboard);
+          let hasKey = false;
           // If the cached dashboard is encrypted (e.g. cached before authorization),
           // decrypt it in-memory using the newly-acquired decryption keys.
           if (parsed && parsed.encrypted) {
@@ -878,15 +883,20 @@ export default function StudentDashboard() {
               const decrypted = decryptObject(parsed, key);
               if (decrypted) {
                 parsed = decrypted;
+                hasKey = true;
               }
             }
+          } else {
+            hasKey = true;
           }
           
           setData(parsed);
           if (cachedSimsCount !== null) {
             setSimulationsCount(parseInt(cachedSimsCount, 10));
           }
-          setLoading(false);
+          if (hasKey || !isAuthenticated) {
+            setLoading(false);
+          }
         } catch (e) {
           console.error("Failed to parse cached dashboard data:", e);
         }
@@ -904,11 +914,41 @@ export default function StudentDashboard() {
               return [];
             })
           ]);
-          setData(result);
-          localStorage.setItem(`cached_dashboard_${subjectId}`, JSON.stringify(result));
-          if (Array.isArray(sims)) {
-            setSimulationsCount(sims.length);
-            localStorage.setItem(`cached_sims_count_${subjectId}`, sims.length.toString());
+
+          let finalResult = result;
+          let finalSims = sims;
+
+          // If the fetched result is encrypted and the faculty is logged in, fetch keys and decrypt
+          if (result && result.encrypted && isAuthenticated) {
+            try {
+              const keys = await fetchGAS("getEncryptionKeys");
+              const dataKey = keys[subjectId];
+              if (dataKey) {
+                const expirationTime = Date.now() + 6 * 60 * 60 * 1000;
+                localStorage.setItem(`subject_unlocked_expiry_${subjectId}`, expirationTime.toString());
+                localStorage.setItem(`subject_key_${subjectId}`, dataKey);
+
+                const decrypted = decryptObject(result, dataKey);
+                if (decrypted) {
+                  finalResult = decrypted;
+                }
+                if (sims && sims.encrypted) {
+                  const decryptedSims = decryptObject(sims, dataKey);
+                  if (decryptedSims) {
+                    finalSims = decryptedSims;
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("Failed to auto-decrypt subject for logged in faculty:", e);
+            }
+          }
+
+          setData(finalResult);
+          localStorage.setItem(`cached_dashboard_${subjectId}`, JSON.stringify(finalResult));
+          if (Array.isArray(finalSims)) {
+            setSimulationsCount(finalSims.length);
+            localStorage.setItem(`cached_sims_count_${subjectId}`, finalSims.length.toString());
           } else {
             setSimulationsCount(0);
             localStorage.setItem(`cached_sims_count_${subjectId}`, "0");
@@ -921,7 +961,7 @@ export default function StudentDashboard() {
       };
       loadDashboardData();
     }
-  }, [subjectId]);
+  }, [subjectId, isAuthenticated, authStatus]);
 
   useEffect(() => {
     // Check if user is already unlocked for this subject
@@ -944,9 +984,14 @@ export default function StudentDashboard() {
       }
       setIsLocked(true);
     } else if (data && data.encrypted) {
-      setIsLocked(true);
+      // If the faculty is authenticated, wait for the background decrypt/loader, don't show lock screen yet
+      if (isAuthenticated) {
+        setIsLocked(false);
+      } else {
+        setIsLocked(true);
+      }
     }
-  }, [data]);
+  }, [data, isAuthenticated]);
 
   const handleGoogleSuccess = async (credentialResponse: any) => {
     if (isValidatingPassword) return;
