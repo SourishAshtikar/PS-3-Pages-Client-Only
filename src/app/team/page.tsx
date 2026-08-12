@@ -305,7 +305,7 @@ export default function TeamPage() {
             transition={{ delay: 0.2, duration: 0.4 }}
             className="text-sm md:text-base text-slate-555 font-medium"
           >
-            The team behind the Gamified EdTech Platform.
+            The team behind the UTTAM Platform.
           </motion.p>
         </div>
 
